@@ -1,0 +1,827 @@
+============================================================
+PROYECTO RED EMPRESA SOPORTE TI - COMANDOS CISCO
+============================================================
+
+IMPORTANTE ANTES DE PEGAR EN FISICO:
+1. Verifica nombres de interfaces en cada equipo:
+   show ip interface brief
+   show interfaces status
+2. En equipos fisicos los puertos pueden cambiar, por ejemplo:
+   G0/0/0 puede ser G0/0 o G0/1 segun modelo.
+3. En enlaces seriales, solo el lado DCE lleva clock rate:
+   show controllers serial0/1/0
+   show controllers serial0/1/1
+4. Si una interfaz esta administratively down, entra a la interfaz y coloca:
+   no shutdown
+5. Guarda siempre con:
+   write memory
+
+============================================================
+PLAN DE DIRECCIONAMIENTO
+============================================================
+
+SEDE PRINCIPAL / WAN CENTRAL
+R-PRINCIPAL-WAN G0/0/0 -> R-SEDE1 G0/0/0
+Red: 10.0.12.0/30
+R-PRINCIPAL-WAN: 10.0.12.1
+R-SEDE1:         10.0.12.2
+
+R-PRINCIPAL-WAN S0/1/0 -> R-SEDE2-CORE S0/1/0
+Red: 10.0.23.0/30
+R-PRINCIPAL-WAN: 10.0.23.1
+R-SEDE2-CORE:    10.0.23.2
+
+R-PRINCIPAL-WAN S0/1/1 -> R-SEDE3-CORE S0/1/0
+Red: 10.0.24.0/30
+R-PRINCIPAL-WAN: 10.0.24.1
+R-SEDE3-CORE:    10.0.24.2
+
+ENLACE REDUNDANTE ENTRE CORES
+R-SEDE2-CORE S0/1/1 -> R-SEDE3-CORE S0/1/1
+Red: 10.0.35.0/30
+R-SEDE2-CORE: 10.0.35.1
+R-SEDE3-CORE: 10.0.35.2
+
+SEDE PRINCIPAL - VLANs
+VLAN 10 SOPORTE:        192.168.10.0/24 Gateway 192.168.10.1
+VLAN 20 ADMINISTRACION: 192.168.20.0/24 Gateway 192.168.20.1
+VLAN 99 NATIVA:         192.168.99.0/24 Gateway 192.168.99.1
+
+SEDE IZQUIERDA - HSRP
+R-SEDE2-CORE G0/0/0 -> R-SEDE2-IZQ G0/0/0
+Red: 10.0.25.0/30
+R-SEDE2-CORE: 10.0.25.1
+R-SEDE2-IZQ:  10.0.25.2
+
+R-SEDE2-CORE G0/0/1 -> R-SEDE2-DER G0/0/0
+Red: 10.0.26.0/30
+R-SEDE2-CORE: 10.0.26.1
+R-SEDE2-DER:  10.0.26.2
+
+LAN HSRP: 192.168.30.0/24
+Gateway virtual: 192.168.30.1
+R-SEDE2-IZQ G0/0/1: 192.168.30.2
+R-SEDE2-DER G0/0/1: 192.168.30.3
+
+SEDE DERECHA
+R-SEDE3-CORE G0/0/0 -> R-SEDE3-LAN G0/0/0
+Red: 10.0.34.0/30
+R-SEDE3-CORE: 10.0.34.1
+R-SEDE3-LAN:  10.0.34.2
+
+LAN SEDE DERECHA: 192.168.40.0/24
+Gateway: 192.168.40.1
+R-SEDE3-LAN G0/0/1: 192.168.40.1
+AP/WRT300N: 192.168.40.2
+
+============================================================
+1) R-PRINCIPAL-WAN
+============================================================
+
+enable
+configure terminal
+hostname R-PRINCIPAL-WAN
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE1
+ip address 10.0.12.1 255.255.255.252
+no shutdown
+exit
+
+interface serial0/1/0
+description ENLACE_A_SEDE_IZQUIERDA
+ip address 10.0.23.1 255.255.255.252
+no shutdown
+exit
+
+interface serial0/1/1
+description ENLACE_A_SEDE_DERECHA
+ip address 10.0.24.1 255.255.255.252
+no shutdown
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+exit
+
+end
+write memory
+
+============================================================
+2) R-SEDE1 - ROUTER SEDE PRINCIPAL
+Router-on-a-Stick + DHCP + RIP
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE1
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-PRINCIPAL-WAN
+ip address 10.0.12.2 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1
+description TRUNK_A_SW-SEDE1-CORE
+no ip address
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1.10
+description VLAN_10_SOPORTE
+encapsulation dot1Q 10
+ip address 192.168.10.1 255.255.255.0
+exit
+
+interface gigabitEthernet0/0/1.20
+description VLAN_20_ADMINISTRACION
+encapsulation dot1Q 20
+ip address 192.168.20.1 255.255.255.0
+exit
+
+interface gigabitEthernet0/0/1.99
+description VLAN_99_NATIVA
+encapsulation dot1Q 99 native
+ip address 192.168.99.1 255.255.255.0
+exit
+
+ip dhcp excluded-address 192.168.10.1 192.168.10.20
+ip dhcp excluded-address 192.168.20.1 192.168.20.20
+ip dhcp excluded-address 192.168.99.1 192.168.99.20
+
+ip dhcp pool VLAN10_SOPORTE
+network 192.168.10.0 255.255.255.0
+default-router 192.168.10.1
+dns-server 8.8.8.8
+exit
+
+ip dhcp pool VLAN20_ADMINISTRACION
+network 192.168.20.0 255.255.255.0
+default-router 192.168.20.1
+dns-server 8.8.8.8
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+network 192.168.10.0
+network 192.168.20.0
+network 192.168.99.0
+exit
+
+end
+write memory
+
+============================================================
+3) SW-SEDE1-CORE - SWITCH PRINCIPAL SEDE PRINCIPAL
+============================================================
+
+enable
+configure terminal
+hostname SW-SEDE1-CORE
+
+vlan 10
+name SOPORTE
+exit
+
+vlan 20
+name ADMINISTRACION
+exit
+
+vlan 99
+name NATIVA
+exit
+
+interface gigabitEthernet0/1
+description TRUNK_A_R-SEDE1
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/24
+description TRUNK_A_SW-SEDE1-IZQ
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/23
+description TRUNK_A_SW-SEDE1-DER
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,99 root primary
+
+end
+write memory
+
+============================================================
+4) SW-SEDE1-IZQ - SWITCH IZQUIERDO SEDE PRINCIPAL
+PC en Fa0/1 - VLAN 10
+Fa0/23 hacia switch derecho
+Fa0/24 hacia switch core
+============================================================
+
+enable
+configure terminal
+hostname SW-SEDE1-IZQ
+
+vlan 10
+name SOPORTE
+exit
+
+vlan 20
+name ADMINISTRACION
+exit
+
+vlan 99
+name NATIVA
+exit
+
+interface fastEthernet0/24
+description TRUNK_A_SW-SEDE1-CORE
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/23
+description TRUNK_A_SW-SEDE1-DER
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/1
+description PC_VLAN10_SOPORTE
+switchport mode access
+switchport access vlan 10
+spanning-tree portfast
+no shutdown
+exit
+
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,99 root secondary
+
+end
+write memory
+
+============================================================
+5) SW-SEDE1-DER - SWITCH DERECHO SEDE PRINCIPAL
+PC en Fa0/1 - VLAN 20
+Fa0/23 hacia switch izquierdo
+Fa0/24 hacia switch core
+============================================================
+
+enable
+configure terminal
+hostname SW-SEDE1-DER
+
+vlan 10
+name SOPORTE
+exit
+
+vlan 20
+name ADMINISTRACION
+exit
+
+vlan 99
+name NATIVA
+exit
+
+interface fastEthernet0/24
+description TRUNK_A_SW-SEDE1-CORE
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/23
+description TRUNK_A_SW-SEDE1-IZQ
+switchport mode trunk
+switchport trunk native vlan 99
+switchport trunk allowed vlan 10,20,99
+no shutdown
+exit
+
+interface fastEthernet0/1
+description PC_VLAN20_ADMINISTRACION
+switchport mode access
+switchport access vlan 20
+spanning-tree portfast
+no shutdown
+exit
+
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,99 root secondary
+
+end
+write memory
+
+============================================================
+6) R-SEDE2-CORE - ROUTER PRINCIPAL SEDE IZQUIERDA
+WAN + enlaces a routers HSRP + enlace redundante a sede derecha
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE2-CORE
+
+interface serial0/1/0
+description ENLACE_A_R-PRINCIPAL-WAN
+ip address 10.0.23.2 255.255.255.252
+no shutdown
+exit
+
+interface serial0/1/1
+description ENLACE_REDUNDANTE_A_R-SEDE3-CORE
+ip address 10.0.35.1 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE2-IZQ
+ip address 10.0.25.1 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1
+description ENLACE_A_R-SEDE2-DER
+ip address 10.0.26.1 255.255.255.252
+no shutdown
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+exit
+
+end
+write memory
+
+============================================================
+7) R-SEDE2-IZQ - ROUTER IZQUIERDO HSRP ACTIVO
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE2-IZQ
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE2-CORE
+ip address 10.0.25.2 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1
+description LAN_HSRP_A_SW-SEDE2_G0/1
+ip address 192.168.30.2 255.255.255.0
+standby 1 ip 192.168.30.1
+standby 1 priority 120
+standby 1 preempt
+no shutdown
+exit
+
+ip dhcp excluded-address 192.168.30.1 192.168.30.20
+
+ip dhcp pool SEDE2_HSRP
+network 192.168.30.0 255.255.255.0
+default-router 192.168.30.1
+dns-server 8.8.8.8
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+network 192.168.30.0
+exit
+
+end
+write memory
+
+============================================================
+8) R-SEDE2-DER - ROUTER DERECHO HSRP STANDBY
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE2-DER
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE2-CORE
+ip address 10.0.26.2 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1
+description LAN_HSRP_A_SW-SEDE2_G0/2
+ip address 192.168.30.3 255.255.255.0
+standby 1 ip 192.168.30.1
+standby 1 priority 100
+standby 1 preempt
+no shutdown
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+network 192.168.30.0
+exit
+
+end
+write memory
+
+============================================================
+9) SW-SEDE2 - SWITCH SEDE IZQUIERDA HSRP
+G0/1 a R-SEDE2-IZQ G0/0/1
+G0/2 a R-SEDE2-DER G0/0/1
+Fa0/1 a PC
+============================================================
+
+enable
+configure terminal
+hostname SW-SEDE2
+
+vlan 30
+name SEDE2_HSRP
+exit
+
+interface gigabitEthernet0/1
+description R-SEDE2-IZQ
+switchport mode access
+switchport access vlan 30
+no shutdown
+exit
+
+interface gigabitEthernet0/2
+description R-SEDE2-DER
+switchport mode access
+switchport access vlan 30
+no shutdown
+exit
+
+interface fastEthernet0/1
+description PC_SEDE2
+switchport mode access
+switchport access vlan 30
+spanning-tree portfast
+no shutdown
+exit
+
+end
+write memory
+
+============================================================
+10) R-SEDE3-CORE - ROUTER PRINCIPAL SEDE DERECHA
+WAN + LAN core + enlace redundante a sede izquierda
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE3-CORE
+
+interface serial0/1/0
+description ENLACE_A_R-PRINCIPAL-WAN
+ip address 10.0.24.2 255.255.255.252
+no shutdown
+exit
+
+interface serial0/1/1
+description ENLACE_REDUNDANTE_A_R-SEDE2-CORE
+ip address 10.0.35.2 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE3-LAN
+ip address 10.0.34.1 255.255.255.252
+no shutdown
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+exit
+
+end
+write memory
+
+============================================================
+11) R-SEDE3-LAN - ROUTER LAN SEDE DERECHA
+DHCP + RIP
+============================================================
+
+enable
+configure terminal
+hostname R-SEDE3-LAN
+
+interface gigabitEthernet0/0/0
+description ENLACE_A_R-SEDE3-CORE
+ip address 10.0.34.2 255.255.255.252
+no shutdown
+exit
+
+interface gigabitEthernet0/0/1
+description LAN_SEDE3_A_SWITCH_G0/1
+ip address 192.168.40.1 255.255.255.0
+no shutdown
+exit
+
+ip dhcp excluded-address 192.168.40.1 192.168.40.20
+
+ip dhcp pool SEDE3_LAN
+network 192.168.40.0 255.255.255.0
+default-router 192.168.40.1
+dns-server 8.8.8.8
+exit
+
+router rip
+version 2
+no auto-summary
+network 10.0.0.0
+network 192.168.40.0
+exit
+
+end
+write memory
+
+============================================================
+12) SW-SEDE3 - SWITCH SEDE DERECHA
+G0/1 a R-SEDE3-LAN G0/0/1
+Fa0/1 a PC cableada con Port Security
+Fa0/2 a Access Point/WRT300N Ethernet 1
+============================================================
+
+enable
+configure terminal
+hostname SW-SEDE3
+
+vlan 40
+name SEDE3_LAN
+exit
+
+interface gigabitEthernet0/1
+description ENLACE_A_R-SEDE3-LAN
+switchport mode access
+switchport access vlan 40
+no shutdown
+exit
+
+interface fastEthernet0/1
+description PC_CABLEADA_SEDE3_PORT_SECURITY
+switchport mode access
+switchport access vlan 40
+switchport port-security
+switchport port-security maximum 1
+switchport port-security mac-address sticky
+switchport port-security violation shutdown
+spanning-tree portfast
+no shutdown
+exit
+
+interface fastEthernet0/2
+description ACCESS_POINT_WRT300N_ETHERNET1
+switchport mode access
+switchport access vlan 40
+spanning-tree portfast
+no shutdown
+exit
+
+end
+write memory
+
+============================================================
+13) ACCESS POINT / WRT300N - CONFIGURACION MANUAL GUI
+============================================================
+
+IMPORTANTE:
+El cable del switch Fa0/2 debe ir a Ethernet 1 del WRT300N.
+NO conectar al puerto Internet/0/0.
+
+GUI > Setup:
+Local IP Address: 192.168.40.2
+Subnet Mask: 255.255.255.0
+Default Gateway: 192.168.40.1
+DHCP Server: Disable
+Save Settings
+
+Wireless:
+SSID: SOPORTE_TI
+Security: WPA2 Personal / WPA2-PSK
+Passphrase: soporte123
+Save Settings
+
+Laptop:
+Desktop > PC Wireless > Conectarse a SSID SOPORTE_TI
+Password: soporte123
+Desktop > IP Configuration > DHCP
+Debe recibir 192.168.40.x con gateway 192.168.40.1
+
+============================================================
+14) CLOCK RATE EN SERIALES
+============================================================
+
+En cada router con serial, verificar DCE:
+
+show controllers serial0/1/0
+show controllers serial0/1/1
+
+Si una interfaz es DCE, colocar clock rate solo en ese lado:
+
+configure terminal
+interface serial0/1/0
+clock rate 64000
+no shutdown
+exit
+end
+write memory
+
+O si es serial0/1/1:
+
+configure terminal
+interface serial0/1/1
+clock rate 64000
+no shutdown
+exit
+end
+write memory
+
+============================================================
+15) COMANDOS DE VERIFICACION FINAL
+============================================================
+
+EN TODOS LOS ROUTERS:
+show ip interface brief
+show ip route
+show ip protocols
+show running-config
+
+DHCP:
+show ip dhcp binding
+show ip dhcp pool
+
+RIP:
+show ip route rip
+show ip protocols
+
+SEDE PRINCIPAL SWITCHES:
+show vlan brief
+show interfaces trunk
+show spanning-tree
+
+HSRP EN SEDE IZQUIERDA:
+show standby brief
+show standby
+
+PORT SECURITY SEDE DERECHA:
+show port-security
+show port-security interface fastEthernet0/1
+show running-config interface fastEthernet0/1
+
+============================================================
+16) PRUEBAS DE PING RECOMENDADAS
+============================================================
+
+Desde PC VLAN 10 sede principal:
+ping 192.168.10.1
+ping 192.168.20.1
+ping 192.168.30.1
+ping 192.168.40.1
+
+Desde PC VLAN 20 sede principal:
+ping 192.168.20.1
+ping 192.168.10.1
+ping 192.168.30.1
+ping 192.168.40.1
+
+Desde PC sede izquierda:
+ping 192.168.30.1
+ping 192.168.30.2
+ping 192.168.30.3
+ping 192.168.10.1
+ping 192.168.20.1
+ping 192.168.40.1
+
+Desde PC cableada o laptop sede derecha:
+ping 192.168.40.1
+ping 192.168.40.2
+ping 192.168.30.1
+ping 192.168.10.1
+ping 192.168.20.1
+
+============================================================
+17) PRUEBA DE HSRP
+============================================================
+
+En R-SEDE2-IZQ debe estar Active:
+show standby brief
+
+En R-SEDE2-DER debe estar Standby:
+show standby brief
+
+Para probar falla, en R-SEDE2-IZQ:
+configure terminal
+interface gigabitEthernet0/0/1
+shutdown
+exit
+
+Luego en R-SEDE2-DER:
+show standby brief
+
+Debe pasar a Active.
+
+Para restaurar R-SEDE2-IZQ:
+configure terminal
+interface gigabitEthernet0/0/1
+no shutdown
+exit
+end
+write memory
+
+============================================================
+18) PRUEBA DE PORT SECURITY
+============================================================
+
+En SW-SEDE3, la PC cableada esta en Fa0/1.
+Primero conectar la PC autorizada y verificar:
+
+show port-security interface fastEthernet0/1
+show running-config interface fastEthernet0/1
+
+Luego conectar otra PC distinta en Fa0/1.
+El puerto debe bloquearse.
+
+Para recuperar el puerto:
+
+enable
+configure terminal
+interface fastEthernet0/1
+shutdown
+no shutdown
+exit
+end
+write memory
+
+Para borrar sticky MAC y volver a probar:
+
+enable
+configure terminal
+interface fastEthernet0/1
+shutdown
+no switchport port-security mac-address sticky
+switchport port-security mac-address sticky
+no shutdown
+exit
+end
+write memory
+
+============================================================
+19) NOTAS PARA LABORATORIO FISICO
+============================================================
+
+1. Si un router tiene puertos EtherSwitch, no permiten subinterfaces.
+   Para Router-on-a-Stick usa un puerto routed real, no un puerto switchport.
+
+2. Si al entrar a una interfaz aparece switchport, es puerto de switch.
+   Si permite ip address directamente, es puerto de router.
+
+3. Para verificar:
+   show running-config interface gigabitEthernet0/0/1
+   show ip interface brief
+
+4. En fisico, revisa cableado, duplex, speed e interfaces:
+   show interfaces
+   show controllers
+   show version
+   show inventory
+
+5. Si un puerto serial queda up/down:
+   revisar clock rate en el lado DCE.
+
+6. Si queda administratively down/down:
+   falta no shutdown.
+
+7. Si queda down/down:
+   cable incorrecto o interfaz equivocada.
+
+============================================================
+FIN DEL BLOC DE COMANDOS
+============================================================
